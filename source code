@@ -1,0 +1,307 @@
+import os
+import sys
+import shutil
+import zipfile
+import tkinter as tk
+from tkinter import messagebox, ttk
+
+VERSION = "1.0"
+
+class R36SBackupAssistant:
+    def __init__(self, root):
+        self.root = root
+        self.root.title(f"R36S Backup & Migration Assistant v{VERSION}")
+        self.root.geometry("550x550")
+        self.root.resizable(False, False)
+
+        # Style Configuration
+        self.style = ttk.Style()
+        self.style.theme_use("clam")
+
+        # Title
+        title_label = ttk.Label(root, text="R36S Backup & Migration Assistant", font=("Helvetica", 16, "bold"))
+        title_label.pack(pady=15)
+
+        # SD Card Selector Frame
+        drive_frame = ttk.LabelFrame(root, text=" Step 1: Select R36S SD Card Partition ", padding=10)
+        drive_frame.pack(fill="x", padx=20, pady=5)
+
+        self.drive_combobox = ttk.Combobox(drive_frame, state="readonly", width=40)
+        self.drive_combobox.pack(side="left", padx=5)
+
+        refresh_btn = ttk.Button(drive_frame, text="🔄 Scan", command=self.detect_drives)
+        refresh_btn.pack(side="left", padx=5)
+
+        # Main Actions Frame
+        actions_frame = ttk.LabelFrame(root, text=" Step 2: Backup & Restore Utilities ", padding=10)
+        actions_frame.pack(fill="both", expand=True, padx=20, pady=10)
+
+        # Grid configuration
+        actions_frame.columnconfigure(0, weight=1)
+        actions_frame.columnconfigure(1, weight=1)
+
+        # 1. EmulationStation
+        es_lbl = ttk.Label(actions_frame, text="EmulationStation (ES) Settings:", font=("Helvetica", 10, "bold"))
+        es_lbl.grid(row=0, column=0, columnspan=2, sticky="w", pady=(5, 2))
+        ttk.Button(actions_frame, text="Backup ES Settings", command=self.backup_es).grid(row=1, column=0, padx=5, pady=2, sticky="ew")
+        ttk.Button(actions_frame, text="Restore ES Settings", command=self.restore_es).grid(row=1, column=1, padx=5, pady=2, sticky="ew")
+
+        # 2. KODI
+        kodi_lbl = ttk.Label(actions_frame, text="KODI Media Center Settings:", font=("Helvetica", 10, "bold"))
+        kodi_lbl.grid(row=2, column=0, columnspan=2, sticky="w", pady=(10, 2))
+        ttk.Button(actions_frame, text="Backup KODI", command=self.backup_kodi).grid(row=3, column=0, padx=5, pady=2, sticky="ew")
+        ttk.Button(actions_frame, text="Restore KODI", command=self.restore_kodi).grid(row=3, column=1, padx=5, pady=2, sticky="ew")
+
+        # 3. Themes
+        themes_lbl = ttk.Label(actions_frame, text="UI Themes:", font=("Helvetica", 10, "bold"))
+        themes_lbl.grid(row=4, column=0, columnspan=2, sticky="w", pady=(10, 2))
+        ttk.Button(actions_frame, text="Backup Themes", command=self.backup_themes).grid(row=5, column=0, padx=5, pady=2, sticky="ew")
+        ttk.Button(actions_frame, text="Restore Themes", command=self.restore_themes).grid(row=5, column=1, padx=5, pady=2, sticky="ew")
+
+        # 4. Emulators & Saves
+        emu_lbl = ttk.Label(actions_frame, text="Emulator Configurations & Saves:", font=("Helvetica", 10, "bold"))
+        emu_lbl.grid(row=6, column=0, columnspan=2, sticky="w", pady=(10, 2))
+        ttk.Button(actions_frame, text="Backup Emulators/Saves", command=self.backup_emulators).grid(row=7, column=0, padx=5, pady=2, sticky="ew")
+        ttk.Button(actions_frame, text="Restore Emulators/Saves", command=self.restore_emulators).grid(row=7, column=1, padx=5, pady=2, sticky="ew")
+
+        # 5. Full Pipeline Buttons
+        separator = ttk.Separator(actions_frame, orient="horizontal")
+        separator.grid(row=8, column=0, columnspan=2, pady=15, sticky="ew")
+
+        ttk.Button(actions_frame, text="📦 Full Migration Backup (All)", command=self.full_backup, style="Accent.TButton").grid(row=9, column=0, padx=5, pady=5, sticky="ew")
+        ttk.Button(actions_frame, text="🚚 Full Migration Restore (All)", command=self.full_restore).grid(row=9, column=1, padx=5, pady=5, sticky="ew")
+
+        # Status Bar
+        self.status_var = tk.StringVar(value="Waiting for target drive detection...")
+        status_bar = ttk.Label(root, textvariable=self.status_var, relief=tk.SUNKEN, anchor=tk.W, padding=5)
+        status_bar.pack(side=tk.BOTTOM, fill=tk.X)
+
+        # Run initial scan
+        self.detect_drives()
+
+    # -------------------------------------------------------------------------
+    # System & Drive Helper Logic
+    # -------------------------------------------------------------------------
+    def detect_drives(self):
+        """Scans Windows for mounted partitions matching typical R36S filesystems."""
+        drives = []
+        import string
+        from ctypes import windll
+        bitmask = windll.kernel32.GetLogicalDrives()
+        
+        for letter in string.ascii_uppercase:
+            if bitmask & 1:
+                drive_path = f"{letter}:\\"
+                # Check for folders typical of an R36S EasyROMs or OS mount
+                is_r36s = any([
+                    os.path.exists(os.path.join(drive_path, "roms")),
+                    os.path.exists(os.path.join(drive_path, "themes")),
+                    os.path.exists(os.path.join(drive_path, "gamelists"))
+                ])
+                if is_r36s:
+                    try:
+                        volume_name = ""
+                        # Try to get volume label if accessible
+                        import win32api # Optional, fall back to generic description
+                        volume_name = win32api.GetVolumeInformation(drive_path)[0]
+                    except ImportError:
+                        pass
+                    label = f"{drive_path} ({volume_name if volume_name else 'R36S Drive'})"
+                    drives.append((drive_path, label))
+            bitmask >>= 1
+
+        if drives:
+            self.drive_combobox['values'] = [d[1] for d in drives]
+            self.drives_map = {d[1]: d[0] for d in drives}
+            self.drive_combobox.current(0)
+            self.status_var.set("Ready. R36S compatible drive(s) detected.")
+        else:
+            self.drive_combobox['values'] = []
+            self.drive_combobox.set("")
+            self.status_var.set("No R36S SD cards found. Insert card and click Scan.")
+
+    def get_target_path(self):
+        selected = self.drive_combobox.get()
+        if not selected or selected not in self.drives_map:
+            messagebox.showerror("No Drive Selected", "Please insert and select your R36S SD Card partition.")
+            return None
+        return self.drives_map[selected]
+
+    def get_backup_dir(self, drive_path):
+        # Keeps backups safe in a 'backup' folder right inside the roms directory
+        backup_path = os.path.join(drive_path, "roms", "backup")
+        os.makedirs(backup_path, exist_ok=True)
+        return backup_path
+
+    # -------------------------------------------------------------------------
+    # ZIP / Backup Archiving Mechanics
+    # -------------------------------------------------------------------------
+    def zip_directory(self, src_dir, zip_filepath):
+        if not os.path.exists(src_dir):
+            return False
+        with zipfile.ZipFile(zip_filepath, 'w', zipfile.ZIP_DEFLATED) as zipf:
+            for root_dir, _, files in os.walk(src_dir):
+                for file in files:
+                    full_path = os.path.join(root_dir, file)
+                    rel_path = os.path.relpath(full_path, start=os.path.dirname(src_dir))
+                    zipf.write(full_path, rel_path)
+        return True
+
+    def unzip_archive(self, zip_filepath, dest_dir):
+        if not os.path.exists(zip_filepath):
+            return False
+        with zipfile.ZipFile(zip_filepath, 'r') as zipf:
+            zipf.extractall(dest_dir)
+        return True
+
+    # -------------------------------------------------------------------------
+    # Script Operations
+    # -------------------------------------------------------------------------
+    def backup_es(self):
+        drive = self.get_target_path()
+        if not drive: return
+        
+        # EmulationStation configurations are mapped on Windows based on the typical SD directory layouts
+        # Since ext4 OS partitions are hidden on standard Windows environments, 
+        # this tool mirrors backups targeting directories exposed on the accessible FAT32/exFAT ROMS partition.
+        es_src = os.path.join(drive, "gamelists") # Adjust config path if using retroarch mapping directory on SD
+        backup_zip = os.path.join(self.get_backup_dir(drive), "ES_Backup.zip")
+
+        self.status_var.set("Backing up EmulationStation configs...")
+        self.root.update()
+
+        if self.zip_directory(es_src, backup_zip):
+            messagebox.showinfo("Success", f"ES Settings backed up successfully to:\n{backup_zip}")
+            self.status_var.set("ES Backup complete.")
+        else:
+            messagebox.showwarning("Incomplete", "No gamelists or configuration files found to backup.")
+            self.status_var.set("ES Backup skipped.")
+
+    def restore_es(self):
+        drive = self.get_target_path()
+        if not drive: return
+        backup_zip = os.path.join(self.get_backup_dir(drive), "ES_Backup.zip")
+        
+        if self.unzip_archive(backup_zip, drive):
+            messagebox.showinfo("Success", "ES Settings successfully restored!")
+        else:
+            messagebox.showerror("Error", "No ES Backup archive found on the SD card.")
+
+    def backup_kodi(self):
+        drive = self.get_target_path()
+        if not drive: return
+        # Kodi mapping folders
+        kodi_src = os.path.join(drive, "kodi") 
+        backup_zip = os.path.join(self.get_backup_dir(drive), "KODI_Backup.zip")
+
+        if self.zip_directory(kodi_src, backup_zip):
+            messagebox.showinfo("Success", "Kodi settings backed up.")
+        else:
+            messagebox.showwarning("Skipped", "No Kodi system directories found on this partition.")
+
+    def restore_kodi(self):
+        drive = self.get_target_path()
+        if not drive: return
+        backup_zip = os.path.join(self.get_backup_dir(drive), "KODI_Backup.zip")
+        if self.unzip_archive(backup_zip, drive):
+            messagebox.showinfo("Success", "Kodi profiles restored!")
+        else:
+            messagebox.showerror("Error", "No Kodi backup file found.")
+
+    def backup_themes(self):
+        drive = self.get_target_path()
+        if not drive: return
+        themes_src = os.path.join(drive, "themes")
+        backup_zip = os.path.join(self.get_backup_dir(drive), "Themes_Backup.zip")
+
+        self.status_var.set("Compressing system UI themes...")
+        self.root.update()
+
+        if self.zip_directory(themes_src, backup_zip):
+            messagebox.showinfo("Success", f"Themes backed up successfully to:\n{backup_zip}")
+            self.status_var.set("Themes Backup complete.")
+        else:
+            messagebox.showwarning("Skipped", "No 'themes' folder detected on the partition.")
+
+    def restore_themes(self):
+        drive = self.get_target_path()
+        if not drive: return
+        backup_zip = os.path.join(self.get_backup_dir(drive), "Themes_Backup.zip")
+        if self.unzip_archive(backup_zip, drive):
+            messagebox.showinfo("Success", "System UI Themes restored successfully.")
+        else:
+            messagebox.showerror("Error", "No Themes Backup file found.")
+
+    def backup_emulators(self):
+        drive = self.get_target_path()
+        if not drive: return
+        
+        # Consolidate standard emulator save states & custom core assets to backup zip
+        backup_dir = self.get_backup_dir(drive)
+        temp_emu_dir = os.path.join(backup_dir, "Emulators_Temp")
+        os.makedirs(temp_emu_dir, exist_ok=True)
+
+        # Scanning target directories mimicking original structure
+        paths_to_grab = {
+            "retroarch_cfg": os.path.join(drive, "retroarch", "retroarch.cfg"),
+            "ppsspp_saves": os.path.join(drive, "psp", "ppsspp", "PSP", "SAVEDATA"),
+            "n64_saves": os.path.join(drive, "n64", "saves")
+        }
+
+        copied_any = False
+        for key, path in paths_to_grab.items():
+            if os.path.exists(path):
+                dest = os.path.join(temp_emu_dir, key)
+                if os.path.isdir(path):
+                    shutil.copytree(path, dest, dirs_exist_ok=True)
+                else:
+                    shutil.copy2(path, dest)
+                copied_any = True
+
+        if copied_any:
+            backup_zip = os.path.join(backup_dir, "Emulators_Backup.zip")
+            self.zip_directory(temp_emu_dir, backup_zip)
+            shutil.rmtree(temp_emu_dir)
+            messagebox.showinfo("Success", f"Emulator profiles & saves backed up to:\n{backup_zip}")
+        else:
+            shutil.rmtree(temp_emu_dir)
+            messagebox.showwarning("Skipped", "No supported emulation configuration directories were resolved.")
+
+    def restore_emulators(self):
+        drive = self.get_target_path()
+        if not drive: return
+        backup_zip = os.path.join(self.get_backup_dir(drive), "Emulators_Backup.zip")
+        if self.unzip_archive(backup_zip, drive):
+            messagebox.showinfo("Success", "Emulator profiles and custom configs restored successfully.")
+        else:
+            messagebox.showerror("Error", "No Emulator Config Backup found.")
+
+    def full_backup(self):
+        """Sequential complete backup matching shell sequence (Option 5)"""
+        drive = self.get_target_path()
+        if not drive: return
+        
+        self.backup_es()
+        self.backup_kodi()
+        self.backup_themes()
+        self.backup_emulators()
+        self.status_var.set("Full migration package completed.")
+        messagebox.showinfo("Complete", "All backups tasks completed sequentially.")
+
+    def full_restore(self):
+        """Sequential complete restore matching shell sequence (Option 6)"""
+        drive = self.get_target_path()
+        if not drive: return
+        
+        self.restore_es()
+        self.restore_kodi()
+        self.restore_themes()
+        self.restore_emulators()
+        self.status_var.set("Full restoration complete.")
+        messagebox.showinfo("Complete", "All components successfully restored.")
+
+
+if __name__ == "__main__":
+    root = tk.Tk()
+    app = R36SBackupAssistant(root)
+    root.mainloop()
